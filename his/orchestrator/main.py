@@ -52,6 +52,7 @@ app = FastAPI(title="HIS Orchestrator", docs_url=None, redoc_url=None)
 HIS_DIR       = pathlib.Path("/share/his")
 REPO_DIR      = HIS_DIR / "his"                  # cloned repo lives here
 ENV_FILE      = REPO_DIR / ".env"
+ENV_STAGING   = HIS_DIR / ".env.staging"         # written pre-clone, moved into repo after
 CONFIG_FILE   = HIS_DIR / "orchestrator.json"    # persists repo_url + token
 COMPOSE_FILE  = REPO_DIR / "docker-compose.yml"
 COMPOSE_ADDON = pathlib.Path("/his/docker-compose.addon.yml")
@@ -175,10 +176,11 @@ GATEWAY_PORT=8000
 
 
 def _read_env() -> dict[str, str]:
-    if not ENV_FILE.exists():
+    path = ENV_FILE if ENV_FILE.exists() else (ENV_STAGING if ENV_STAGING.exists() else None)
+    if not path:
         return {}
     result: dict[str, str] = {}
-    for line in ENV_FILE.read_text().splitlines():
+    for line in path.read_text().splitlines():
         line = line.strip()
         if line and not line.startswith("#") and "=" in line:
             k, _, v = line.partition("=")
@@ -187,8 +189,9 @@ def _read_env() -> dict[str, str]:
 
 
 def _write_env(fields: dict[str, str]) -> None:
-    REPO_DIR.mkdir(parents=True, exist_ok=True)
-    ENV_FILE.write_text(ENV_TEMPLATE.format(**fields))
+    HIS_DIR.mkdir(parents=True, exist_ok=True)
+    # Write to staging path — _ensure_repo moves it into REPO_DIR after clone
+    ENV_STAGING.write_text(ENV_TEMPLATE.format(**fields))
 
 
 # ── Git helpers ────────────────────────────────────────────────────────────────
@@ -216,6 +219,9 @@ def _validate_repo(url: str, token: str) -> tuple[bool, str]:
 def _ensure_repo(url: str, token: str, log_fn) -> bool:
     auth_url = _git_url_with_token(url, token)
     if not COMPOSE_FILE.exists():
+        # Remove empty dir that may exist before cloning
+        if REPO_DIR.exists() and not any(REPO_DIR.iterdir()):
+            REPO_DIR.rmdir()
         log_fn("→ Cloning HIS repository…")
         r = subprocess.run(
             ["git", "clone", "--depth=1", auth_url, str(REPO_DIR)],
@@ -236,6 +242,9 @@ def _ensure_repo(url: str, token: str, log_fn) -> bool:
             capture_output=True,
         )
         log_fn("✓ Up to date.")
+    # Move staging .env into the repo now that REPO_DIR exists
+    if ENV_STAGING.exists():
+        ENV_STAGING.rename(ENV_FILE)
     return True
 
 
