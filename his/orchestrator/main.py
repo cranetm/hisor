@@ -426,7 +426,7 @@ async def configure(request: Request):
     if not fields.get("ha_url") or fields.get("ha_url") == "__from_prefill__":
         fields["ha_url"] = _supervisor_ha_url or "http://homeassistant.local:8123"
     if not fields.get("ha_token", "").strip():
-        return {"ok": False, "error": "Home Assistant token is required."}
+        return {"ok": False, "error": "Home Assistant token could not be auto-provisioned. Please enter it manually in the HA section."}
 
     fields.setdefault("llm_primary_provider", "gemini")
     fields.setdefault("embedding_provider", "gemini")
@@ -756,10 +756,17 @@ _WIZARD_HTML = r"""<!DOCTYPE html>
     <div class="card mb-4">
       <div class="flex items-center gap-2 mb-3">
         <span class="section-title">Home Assistant</span>
-        <span class="badge badge-auto">⚡ Auto-configured</span>
+        <span class="badge badge-auto" id="ha-badge">⚡ Auto-configured</span>
       </div>
-      <p class="text-slate-400 text-sm">HA URL and access token are automatically provided by the HA Supervisor.</p>
-      <p class="hint mt-2">Override in Advanced settings if needed.</p>
+      <p class="text-slate-400 text-sm" id="ha-desc">HA URL and access token are automatically provided by the HA Supervisor.</p>
+      <!-- Hidden token field — filled by prefill; shown as fallback if auto-provision fails -->
+      <div id="ha-token-fallback" class="hidden mt-3">
+        <label>Long-Lived Access Token</label>
+        <input type="password" id="ha_token" placeholder="eyJ…" autocomplete="off">
+        <p class="hint">HA → Profile → Security → Long-Lived Access Tokens → Create Token</p>
+      </div>
+      <input type="hidden" id="ha_token_hidden">
+      <p class="hint mt-2">Override URL in Advanced settings if needed.</p>
     </div>
 
     <!-- ⑥ Advanced -->
@@ -1029,7 +1036,8 @@ function configure(){
     groq_api_key:ps.groq.key||'',groq_model:ps.groq.model,
     openrouter_api_key:ps.openrouter.key||'',openrouter_model:ps.openrouter.model,
     ollama_base_url:val('ollama_base_url')||'http://ollama:11434',ollama_model:ps.ollama.model,
-    ha_url:val('ha_url')||'__from_prefill__',ha_token:'__from_prefill__',
+    ha_url:val('ha_url')||'__from_prefill__',
+    ha_token:val('ha_token')||val('ha_token_hidden')||'__from_prefill__',
     public_base_url:val('public_base_url'),
     his_api_token:val('his_api_token'),
     postgres_password:val('postgres_password'),
@@ -1089,6 +1097,15 @@ window.addEventListener('DOMContentLoaded',()=>{
       PUBLIC_BASE_URL:'public_base_url',POSTGRES_PASSWORD:'postgres_password',
       OLLAMA_BASE_URL:'ollama_base_url'};
     for(const[k,field]of Object.entries(km)){if(data[k]){const el=document.getElementById(field);if(el)el.value=data[k];}}
+    // HA token — store in hidden field; show manual input if auto-provision failed
+    if(data.HA_TOKEN){
+      document.getElementById('ha_token_hidden').value=data.HA_TOKEN;
+    } else {
+      document.getElementById('ha-badge').textContent='⚠ Manual required';
+      document.getElementById('ha-badge').className='badge badge-req';
+      document.getElementById('ha-desc').textContent='Could not auto-provision HA token. Please enter one manually.';
+      document.getElementById('ha-token-fallback').classList.remove('hidden');
+    }
     // Prefill repo fields
     if(data.REPO_URL){
       document.getElementById('repo_url').value=data.REPO_URL;
