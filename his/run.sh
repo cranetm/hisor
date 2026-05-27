@@ -130,6 +130,10 @@ run_proxy() {
 
 mkdir -p "${HIS_DIR}"
 
+# Clear transient flags from previous runs (they live in /tmp which persists
+# across container stop/start within the same container lifecycle).
+rm -f "${READY_FLAG}" /tmp/his_uninstalled
+
 # Enter wizard mode if:
 #   - .env doesn't exist, OR
 #   - the HIS stack has never been deployed (no docker-compose.yml in repo)
