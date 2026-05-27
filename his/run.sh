@@ -22,6 +22,7 @@ shutdown() {
     log "Shutting down HIS stack…"
     if [ -f "${COMPOSE_FILE}" ] && [ -f "${ENV_FILE}" ]; then
         docker compose \
+            --project-name his \
             -f "${COMPOSE_FILE}" \
             -f "${COMPOSE_ADDON}" \
             --env-file "${ENV_FILE}" \
@@ -38,6 +39,7 @@ trap shutdown SIGTERM SIGINT
 
 compose_up() {
     docker compose \
+        --project-name his \
         -f "${COMPOSE_FILE}" \
         -f "${COMPOSE_ADDON}" \
         --env-file "${ENV_FILE}" \
@@ -46,6 +48,7 @@ compose_up() {
 
 compose_ps() {
     docker compose \
+        --project-name his \
         -f "${COMPOSE_FILE}" \
         -f "${COMPOSE_ADDON}" \
         --env-file "${ENV_FILE}" \
@@ -53,9 +56,7 @@ compose_ps() {
 }
 
 join_his_net() {
-    # Connect this add-on container to his_net so nginx can reach his_gateway.
-    # HOSTNAME is set by Docker to the container ID.
-    local net="his_his_net"   # compose project "his" + network name "his_net"
+    local net="his_his_net"   # project "his" + network name "his_net"
     docker network connect "${net}" "${HOSTNAME}" 2>/dev/null \
         && log "Joined ${net}" \
         || log "Already in ${net} (or connect failed — nginx may fall back to host network)"

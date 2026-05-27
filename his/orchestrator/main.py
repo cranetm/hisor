@@ -252,17 +252,23 @@ def _ensure_repo(url: str, token: str, log_fn) -> bool:
 
 def _run_compose(log_fn) -> bool:
     ansi = re.compile(r"\x1b\[[0-9;]*m")
+    # Project name "his" ensures volumes/networks are always named his_*
+    # regardless of the directory name the compose file lives in.
+    COMPOSE_CMD = [
+        "docker", "compose",
+        "--project-name", "his",
+        "-f", str(COMPOSE_FILE), "-f", str(COMPOSE_ADDON),
+        "--env-file", str(ENV_FILE),
+    ]
 
-    # On a fresh install the postgres_data volume may be left over from a
-    # previous failed attempt with a different auto-generated password.
-    # Safe to wipe it when the postgres container doesn't exist yet —
-    # that means no running stack, so there's no live data to lose.
+    # Wipe stale postgres volume when no container exists yet.
+    # A leftover volume from a previous failed attempt has a different
+    # auto-generated password → "password authentication failed".
     container_check = subprocess.run(
         ["docker", "inspect", "--format", "{{.State.Status}}", "his_postgres"],
         capture_output=True, text=True,
     )
-    postgres_running = container_check.returncode == 0  # container exists
-    if not postgres_running:
+    if container_check.returncode != 0:  # container doesn't exist
         vol_check = subprocess.run(
             ["docker", "volume", "inspect", "his_postgres_data"],
             capture_output=True, text=True,
@@ -274,10 +280,7 @@ def _run_compose(log_fn) -> bool:
             log_fn("✓ Stale volume removed — DB will be re-initialised.")
 
     proc = subprocess.Popen(
-        ["docker", "compose",
-         "-f", str(COMPOSE_FILE), "-f", str(COMPOSE_ADDON),
-         "--env-file", str(ENV_FILE),
-         "up", "-d", "--remove-orphans"],
+        COMPOSE_CMD + ["up", "-d", "--remove-orphans"],
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         text=True, cwd=str(STACK_DIR),
     )
@@ -291,11 +294,8 @@ def _run_compose(log_fn) -> bool:
         return False
 
     # Run migrations inside the already-running gateway container via docker exec.
-    # Using `docker compose run` would try to start a second gateway container
-    # and fail with "port already in use" since the first is already bound.
     log_fn("→ Running database migrations…")
-    # Small sleep to ensure postgres finished initialising its user/role
-    # (pg_isready returns healthy before POSTGRES_USER is fully created on first boot)
+    # Small sleep: pg_isready returns healthy before POSTGRES_USER is fully created on first boot.
     time.sleep(3)
     mig = subprocess.run([
         "docker", "exec",
@@ -619,6 +619,7 @@ async def uninstall():
                     log("→ Stopping containers and removing volumes…")
                     p = subprocess.Popen([
                         "docker", "compose",
+                        "--project-name", "his",
                         "-f", str(COMPOSE_FILE), "-f", str(COMPOSE_ADDON),
                         "--env-file", str(ENV_FILE),
                         "down", "--volumes", "--remove-orphans", "--timeout", "30",
