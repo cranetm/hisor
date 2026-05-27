@@ -269,66 +269,26 @@ def _run_compose(log_fn) -> bool:
         log_fn(f"✗ docker compose exited with code {proc.returncode}")
         return False
 
+    # Run migrations inside the already-running gateway container via docker exec.
+    # Using `docker compose run` would try to start a second gateway container
+    # and fail with "port already in use" since the first is already bound.
     log_fn("→ Running database migrations…")
     mig = subprocess.run([
-        "docker", "compose",
-        "-f", str(COMPOSE_FILE), "--env-file", str(ENV_FILE),
-        "run", "--rm",
+        "docker", "exec",
         "-e", "PYTHONPATH=/app:/app/shared_lib:/app/knowledge_lib",
-        "--entrypoint", "", "gateway",
+        "his_gateway",
         "sh", "-c", "cd /app/knowledge_lib && alembic upgrade head",
-    ], capture_output=True, text=True, cwd=str(STACK_DIR))
-    for line in (mig.stdout + mig.stderr).splitlines():
+    ], capture_output=True, text=True)
+    output = (mig.stdout + mig.stderr).strip()
+    for line in output.splitlines():
         if line.strip():
             log_fn(line)
-    log_fn("✓ Migrations applied." if mig.returncode == 0
-           else "⚠ Migrations failed — stack running but DB may be incomplete.")
-
-    log_fn("→ Connecting add-on to HIS network…")
-    hostname = os.environ.get("HOSTNAME", "")
-    if hostname:
-        r = subprocess.run(["docker", "network", "connect", "his_his_net", hostname],
-                           capture_output=True, text=True)
-        log_fn("✓ Joined his_his_net." if r.returncode == 0
-               else f"  (network: {r.stderr.strip() or 'already connected'})")
-    return True
-
-
-# ── Compose helpers ────────────────────────────────────────────────────────────
-
-def _run_compose(log_fn) -> bool:
-    ansi = re.compile(r"\x1b\[[0-9;]*m")
-    proc = subprocess.Popen(
-        ["docker", "compose",
-         "-f", str(COMPOSE_FILE), "-f", str(COMPOSE_ADDON),
-         "--env-file", str(ENV_FILE),
-         "up", "-d", "--remove-orphans"],
-        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-        text=True, cwd=str(STACK_DIR),
-    )
-    for line in proc.stdout:
-        clean = ansi.sub("", line).rstrip()
-        if clean:
-            log_fn(clean)
-    proc.wait()
-    if proc.returncode != 0:
-        log_fn(f"✗ docker compose exited with code {proc.returncode}")
-        return False
-
-    log_fn("→ Running database migrations…")
-    mig = subprocess.run([
-        "docker", "compose",
-        "-f", str(COMPOSE_FILE), "--env-file", str(ENV_FILE),
-        "run", "--rm",
-        "-e", "PYTHONPATH=/app:/app/shared_lib:/app/knowledge_lib",
-        "--entrypoint", "", "gateway",
-        "sh", "-c", "cd /app/knowledge_lib && alembic upgrade head",
-    ], capture_output=True, text=True, cwd=str(STACK_DIR))
-    for line in (mig.stdout + mig.stderr).splitlines():
-        if line.strip():
-            log_fn(line)
-    log_fn("✓ Migrations applied." if mig.returncode == 0
-           else "⚠ Migrations failed — stack running but DB may be incomplete.")
+    if not output:
+        log_fn("  (no migration output — may already be up to date)")
+    if mig.returncode == 0:
+        log_fn("✓ Migrations applied.")
+    else:
+        log_fn(f"⚠ Migrations failed (exit {mig.returncode}) — check gateway logs.")
 
     log_fn("→ Connecting add-on to HIS network…")
     hostname = os.environ.get("HOSTNAME", "")
@@ -514,6 +474,7 @@ _deploy_in_progress = False
 
 @app.get("/deploy")
 async def deploy():
+    import asyncio
     global _deploy_in_progress
     with _deploy_lock:
         if _deploy_in_progress:
@@ -521,41 +482,55 @@ async def deploy():
         _deploy_in_progress = True
 
     async def stream():
+        import asyncio
         global _deploy_in_progress
-        lines: list[str] = []
-        def log(msg): lines.append(msg)
+        queue: asyncio.Queue[str | None] = asyncio.Queue()
+        loop = asyncio.get_event_loop()
 
-        def flush():
-            nonlocal lines
-            out, lines = lines, []
-            return out
+        def log(msg: str):
+            loop.call_soon_threadsafe(queue.put_nowait, msg)
+
+        def _work():
+            try:
+                orc = _read_orconfig()
+                if not _ensure_repo(orc.get("repo_url", ""), orc.get("repo_token", ""), log):
+                    loop.call_soon_threadsafe(queue.put_nowait, "__ERROR__")
+                    return
+                if not _run_compose(log):
+                    loop.call_soon_threadsafe(queue.put_nowait, "__ERROR__")
+                    return
+                loop.call_soon_threadsafe(queue.put_nowait, "__DONE__")
+            except Exception as exc:
+                loop.call_soon_threadsafe(queue.put_nowait, f"ERROR: {exc}")
+                loop.call_soon_threadsafe(queue.put_nowait, "__ERROR__")
+            finally:
+                with _deploy_lock:
+                    global _deploy_in_progress
+                    _deploy_in_progress = False
 
         try:
             yield "data: ╔══════════════════════════════════╗\n\n"
             yield "data: ║     HIS — First-run Bootstrap    ║\n\n"
             yield "data: ╚══════════════════════════════════╝\n\n"
 
-            orc = _read_orconfig()
-            if not _ensure_repo(orc.get("repo_url", ""), orc.get("repo_token", ""), log):
-                for l in flush(): yield f"data: {l}\n\n"
-                yield "event: error\ndata: \n\n"
-                return
-            for l in flush(): yield f"data: {l}\n\n"
+            asyncio.get_event_loop().run_in_executor(None, _work)
 
-            if not _run_compose(log):
-                for l in flush(): yield f"data: {l}\n\n"
-                yield "event: error\ndata: \n\n"
-                return
-            for l in flush(): yield f"data: {l}\n\n"
+            while True:
+                msg = await asyncio.wait_for(queue.get(), timeout=300)
+                if msg == "__DONE__":
+                    yield "data: ✅ HIS is running!\n\n"
+                    READY_FLAG.touch()
+                    yield "event: done\ndata: \n\n"
+                    return
+                elif msg == "__ERROR__":
+                    yield "event: error\ndata: \n\n"
+                    return
+                else:
+                    yield f"data: {msg}\n\n"
 
-            yield "data: ✅ HIS is running!\n\n"
-            READY_FLAG.touch()
-            yield "event: done\ndata: \n\n"
-
-        except Exception as exc:
-            yield f"data: ERROR: {exc}\n\n"
+        except asyncio.TimeoutError:
+            yield "data: ✗ Timed out waiting for deploy to complete.\n\n"
             yield "event: error\ndata: \n\n"
-        finally:
             with _deploy_lock:
                 _deploy_in_progress = False
 
@@ -606,48 +581,68 @@ async def validate_domain(request: Request):
 
 @app.get("/uninstall")
 async def uninstall():
+    import asyncio
     async def stream():
+        queue: asyncio.Queue[str | None] = asyncio.Queue()
+        loop = asyncio.get_event_loop()
         ansi = re.compile(r"\x1b\[[0-9;]*m")
-        def run(cmd, **kw):
-            p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, **kw)
-            lines = [ansi.sub("", l).rstrip() for l in p.stdout if l.strip()]
-            p.wait()
-            return p.returncode, lines
+
+        def log(msg: str):
+            loop.call_soon_threadsafe(queue.put_nowait, msg)
+
+        def _work():
+            try:
+                if COMPOSE_FILE.exists() and ENV_FILE.exists():
+                    log("→ Stopping containers and removing volumes…")
+                    p = subprocess.Popen([
+                        "docker", "compose",
+                        "-f", str(COMPOSE_FILE), "-f", str(COMPOSE_ADDON),
+                        "--env-file", str(ENV_FILE),
+                        "down", "--volumes", "--remove-orphans", "--timeout", "30",
+                    ], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, cwd=str(STACK_DIR))
+                    for line in p.stdout:
+                        clean = ansi.sub("", line).rstrip()
+                        if clean:
+                            log(clean)
+                    p.wait()
+                    log("✓ Containers and volumes removed." if p.returncode == 0
+                        else "⚠ compose down reported errors (continuing).")
+                else:
+                    log("→ No running stack found — skipping compose down.")
+
+                for vol in ("his_postgres_data",):
+                    r = subprocess.run(["docker", "volume", "rm", vol], capture_output=True, text=True)
+                    if r.returncode == 0:
+                        log(f"✓ Removed volume {vol}.")
+
+                log("→ Removing /share/his…")
+                try:
+                    shutil.rmtree(str(HIS_DIR), ignore_errors=True)
+                    log("✓ /share/his removed.")
+                except Exception as exc:
+                    log(f"⚠ Could not remove /share/his: {exc}")
+
+                log("✅ HIS fully uninstalled. You can now remove the add-on from HA.")
+                loop.call_soon_threadsafe(queue.put_nowait, "__DONE__")
+            except Exception as exc:
+                log(f"ERROR: {exc}")
+                loop.call_soon_threadsafe(queue.put_nowait, "__DONE__")
 
         yield "data: ╔══════════════════════════════════╗\n\n"
         yield "data: ║       HIS — Uninstalling…        ║\n\n"
         yield "data: ╚══════════════════════════════════╝\n\n"
 
-        if COMPOSE_FILE.exists() and ENV_FILE.exists():
-            yield "data: → Stopping containers and removing volumes…\n\n"
-            code, lines = run([
-                "docker", "compose",
-                "-f", str(COMPOSE_FILE), "-f", str(COMPOSE_ADDON),
-                "--env-file", str(ENV_FILE),
-                "down", "--volumes", "--remove-orphans", "--timeout", "30",
-            ], cwd=str(STACK_DIR))
-            for l in lines: yield f"data: {l}\n\n"
-            yield "data: ✓ Containers and volumes removed.\n\n" if code == 0 \
-                else "data: ⚠ compose down reported errors (continuing).\n\n"
-        else:
-            yield "data: → No running stack found — skipping compose down.\n\n"
+        asyncio.get_event_loop().run_in_executor(None, _work)
 
-        for vol in ("his_postgres_data",):
-            r = subprocess.run(["docker", "volume", "rm", vol], capture_output=True, text=True)
-            if r.returncode == 0:
-                yield f"data: ✓ Removed volume {vol}.\n\n"
-
-        yield "data: → Removing /share/his…\n\n"
-        try:
-            shutil.rmtree(str(HIS_DIR), ignore_errors=True)
-            yield "data: ✓ /share/his removed.\n\n"
-        except Exception as exc:
-            yield f"data: ⚠ Could not remove /share/his: {exc}\n\n"
-
-        yield "data: ✅ HIS fully uninstalled. You can now remove the add-on from HA.\n\n"
-        yield "event: done\ndata: \n\n"
-        READY_FLAG.unlink(missing_ok=True)
-        pathlib.Path("/tmp/his_uninstalled").touch()
+        while True:
+            msg = await asyncio.wait_for(queue.get(), timeout=180)
+            if msg == "__DONE__":
+                yield "event: done\ndata: \n\n"
+                READY_FLAG.unlink(missing_ok=True)
+                pathlib.Path("/tmp/his_uninstalled").touch()
+                return
+            else:
+                yield f"data: {msg}\n\n"
 
     return StreamingResponse(stream(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
