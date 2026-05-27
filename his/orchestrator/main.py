@@ -252,6 +252,24 @@ def _ensure_repo(url: str, token: str, log_fn) -> bool:
 
 def _run_compose(log_fn) -> bool:
     ansi = re.compile(r"\x1b\[[0-9;]*m")
+
+    # On a first install (no prior .env in repo) the postgres_data volume may
+    # be left over from a previous failed attempt with a different
+    # auto-generated password, causing "password authentication failed".
+    # Safe to wipe it here — first install means no user data yet.
+    # Detect first install by checking if .env was just written (< 60s ago).
+    env_age = (time.time() - ENV_FILE.stat().st_mtime) if ENV_FILE.exists() else 9999
+    if env_age < 60:
+        vol_check = subprocess.run(
+            ["docker", "volume", "inspect", "his_postgres_data"],
+            capture_output=True, text=True,
+        )
+        if vol_check.returncode == 0:
+            log_fn("→ Removing stale postgres volume from previous attempt…")
+            subprocess.run(["docker", "volume", "rm", "-f", "his_postgres_data"],
+                           capture_output=True)
+            log_fn("✓ Stale volume removed — DB will be re-initialised.")
+
     proc = subprocess.Popen(
         ["docker", "compose",
          "-f", str(COMPOSE_FILE), "-f", str(COMPOSE_ADDON),
