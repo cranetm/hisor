@@ -291,11 +291,15 @@ def _run_compose(log_fn) -> bool:
     # Using `docker compose run` would try to start a second gateway container
     # and fail with "port already in use" since the first is already bound.
     log_fn("→ Running database migrations…")
+    # Small sleep to ensure postgres finished initialising its user/role
+    # (pg_isready returns healthy before POSTGRES_USER is fully created on first boot)
+    time.sleep(3)
     mig = subprocess.run([
         "docker", "exec",
-        "-e", "PYTHONPATH=/app:/app/shared_lib:/app/knowledge_lib",
         "his_gateway",
-        "sh", "-c", "cd /app/knowledge_lib && alembic upgrade head",
+        "sh", "-c",
+        "echo 'POSTGRES_URL_SYNC='$POSTGRES_URL_SYNC && "
+        "cd /app/knowledge_lib && alembic upgrade head",
     ], capture_output=True, text=True)
     output = (mig.stdout + mig.stderr).strip()
     for line in output.splitlines():
