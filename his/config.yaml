@@ -3,7 +3,7 @@ name: "Household Intelligence System"
 description: "AI-native household operating system — memory, agents, and automation intelligence for Home Assistant."
 version: "0.1.0"
 slug: "his"
-url: "https://github.com/your-org/HIS"
+url: "https://github.com/cranetm/hisor"
 
 # ── Architecture ──────────────────────────────────────────────────────────────
 # This add-on is an orchestrator: it pulls and manages the full HIS Docker stack
