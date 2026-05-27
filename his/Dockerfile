@@ -1,5 +1,6 @@
-ARG BUILD_FROM=ghcr.io/home-assistant/amd64-base:latest
-FROM ${BUILD_FROM}
+ARG BUILD_FROM
+ARG BUILD_ARCH=amd64
+FROM ${BUILD_FROM:-ghcr.io/home-assistant/${BUILD_ARCH}-base:latest}
 
 # ── System packages ───────────────────────────────────────────────────────────
 RUN apk add --no-cache \
