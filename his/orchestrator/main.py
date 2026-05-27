@@ -253,13 +253,16 @@ def _ensure_repo(url: str, token: str, log_fn) -> bool:
 def _run_compose(log_fn) -> bool:
     ansi = re.compile(r"\x1b\[[0-9;]*m")
 
-    # On a first install (no prior .env in repo) the postgres_data volume may
-    # be left over from a previous failed attempt with a different
-    # auto-generated password, causing "password authentication failed".
-    # Safe to wipe it here — first install means no user data yet.
-    # Detect first install by checking if .env was just written (< 60s ago).
-    env_age = (time.time() - ENV_FILE.stat().st_mtime) if ENV_FILE.exists() else 9999
-    if env_age < 60:
+    # On a fresh install the postgres_data volume may be left over from a
+    # previous failed attempt with a different auto-generated password.
+    # Safe to wipe it when the postgres container doesn't exist yet —
+    # that means no running stack, so there's no live data to lose.
+    container_check = subprocess.run(
+        ["docker", "inspect", "--format", "{{.State.Status}}", "his_postgres"],
+        capture_output=True, text=True,
+    )
+    postgres_running = container_check.returncode == 0  # container exists
+    if not postgres_running:
         vol_check = subprocess.run(
             ["docker", "volume", "inspect", "his_postgres_data"],
             capture_output=True, text=True,
@@ -297,9 +300,7 @@ def _run_compose(log_fn) -> bool:
     mig = subprocess.run([
         "docker", "exec",
         "his_gateway",
-        "sh", "-c",
-        "echo 'POSTGRES_URL_SYNC='$POSTGRES_URL_SYNC && "
-        "cd /app/knowledge_lib && alembic upgrade head",
+        "sh", "-c", "cd /app/knowledge_lib && alembic upgrade head",
     ], capture_output=True, text=True)
     output = (mig.stdout + mig.stderr).strip()
     for line in output.splitlines():
