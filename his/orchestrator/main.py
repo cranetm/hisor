@@ -856,7 +856,7 @@ async function validateRepo(){
   btn.disabled=true;btn.innerHTML='<span class="spinner"></span>';
   setRepoMsg('⏳ Checking access…','vmsg-info');
   try{
-    const r=await fetch('/validate-repo',{method:'POST',headers:{'Content-Type':'application/json'},
+    const r=await fetch(`${API_BASE}/validate-repo`,{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({url,token})});
     const d=await r.json();
     if(d.ok){
@@ -966,7 +966,7 @@ async function validateProvider(provider){
   if(btn){btn.disabled=true;btn.innerHTML='<span class="spinner"></span>';}
   setVmsg(provider,'⏳ Connecting…','vmsg-info');
   try{
-    const resp=await fetch(`/providers/${provider}/models?api_key=${encodeURIComponent(key)}`);
+    const resp=await fetch(`${API_BASE}/providers/${provider}/models?api_key=${encodeURIComponent(key)}`);
     const data=await resp.json();
     if(!resp.ok)throw new Error(data.detail||`HTTP ${resp.status}`);
     const models=data.models||[];
@@ -998,7 +998,7 @@ function renderModelSelect(provider,models,current){
 async function testDomain(){
   const url=val('public_base_url');if(!url){showDomainStatus('Enter a URL first.',false);return;}
   try{
-    const r=await fetch('/validate-domain',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url})});
+    const r=await fetch(`${API_BASE}/validate-domain`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url})});
     const d=await r.json();
     showDomainStatus(d.ok?'✓ Reachable'+(d.note?' — '+d.note:''):'✗ '+(d.error||'Not reachable'),d.ok);
   }catch(e){showDomainStatus('✗ '+e.message,false);}
@@ -1037,7 +1037,7 @@ function configure(){
     telegram_allowed_user_ids:formatIds(val('telegram_allowed_user_ids')),
   };
   const btn=document.getElementById('deploy-btn');btn.disabled=true;btn.textContent='Saving…';
-  fetch('/configure',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(fields)})
+  fetch(`${API_BASE}/configure`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(fields)})
     .then(r=>r.json()).then(d=>{
       if(d.ok)startDeploy();
       else{showError(d.error||'Failed.');btn.disabled=false;btn.textContent='🚀 Install HIS';}
@@ -1052,8 +1052,7 @@ function startDeploy(isUninstall=false){
   document.getElementById('deploy-title').textContent=isUninstall?'Uninstalling HIS…':'Installing HIS…';
   const log=document.getElementById('log'),status=document.getElementById('deploy-status');
   log.textContent='';
-  const url=isUninstall?'/uninstall':'/deploy';
-  const es=new EventSource(url);
+  const es=new EventSource(`${API_BASE}/${isUninstall?'uninstall':'deploy'}`);
   es.onmessage=e=>{log.textContent+=e.data+'\n';log.scrollTop=log.scrollHeight;};
   es.addEventListener('done',()=>{
     es.close();
@@ -1072,12 +1071,14 @@ function startUninstall(){
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 window.addEventListener('DOMContentLoaded',()=>{
+  // Derive API base from current page URL so calls work under HA ingress path
+  const API_BASE = window.location.pathname.replace(/\/+$/, '');
   renderProviderList();
   setTimeout(()=>{
     if(!val('his_api_token'))document.getElementById('his_api_token').value=hexRand(32);
     if(!val('postgres_password'))document.getElementById('postgres_password').value=hexRand(16);
   },120);
-  fetch('/prefill').then(r=>r.json()).then(data=>{
+  fetch(`${API_BASE}/prefill`).then(r=>r.json()).then(data=>{
     if(data.GEMINI_API_KEY)ps.gemini.key=data.GEMINI_API_KEY;
     if(data.GROQ_API_KEY)ps.groq.key=data.GROQ_API_KEY;
     if(data.OPENROUTER_API_KEY)ps.openrouter.key=data.OPENROUTER_API_KEY;
