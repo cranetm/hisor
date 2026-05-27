@@ -50,11 +50,12 @@ app = FastAPI(title="HIS Orchestrator", docs_url=None, redoc_url=None)
 # ── Paths ──────────────────────────────────────────────────────────────────────
 
 HIS_DIR       = pathlib.Path("/share/his")
-REPO_DIR      = HIS_DIR / "his"                  # cloned repo lives here
-ENV_FILE      = REPO_DIR / ".env"
+REPO_DIR      = HIS_DIR / "repo"                 # git clone target
+STACK_DIR     = REPO_DIR / "his"                 # docker-compose.yml lives here
+ENV_FILE      = STACK_DIR / ".env"
 ENV_STAGING   = HIS_DIR / ".env.staging"         # written pre-clone, moved into repo after
 CONFIG_FILE   = HIS_DIR / "orchestrator.json"    # persists repo_url + token
-COMPOSE_FILE  = REPO_DIR / "docker-compose.yml"
+COMPOSE_FILE  = STACK_DIR / "docker-compose.yml"
 COMPOSE_ADDON = pathlib.Path("/his/docker-compose.addon.yml")
 READY_FLAG    = pathlib.Path("/tmp/his_stack_ready")
 
@@ -219,7 +220,7 @@ def _validate_repo(url: str, token: str) -> tuple[bool, str]:
 def _ensure_repo(url: str, token: str, log_fn) -> bool:
     auth_url = _git_url_with_token(url, token)
     if not COMPOSE_FILE.exists():
-        # Remove empty dir that may exist before cloning
+        # Remove empty dir if pre-created
         if REPO_DIR.exists() and not any(REPO_DIR.iterdir()):
             REPO_DIR.rmdir()
         log_fn("→ Cloning HIS repository…")
@@ -242,9 +243,54 @@ def _ensure_repo(url: str, token: str, log_fn) -> bool:
             capture_output=True,
         )
         log_fn("✓ Up to date.")
-    # Move staging .env into the repo now that REPO_DIR exists
+    # Move staging .env into STACK_DIR now that repo is cloned
     if ENV_STAGING.exists():
+        STACK_DIR.mkdir(parents=True, exist_ok=True)
         ENV_STAGING.rename(ENV_FILE)
+    return True
+
+
+def _run_compose(log_fn) -> bool:
+    ansi = re.compile(r"\x1b\[[0-9;]*m")
+    proc = subprocess.Popen(
+        ["docker", "compose",
+         "-f", str(COMPOSE_FILE), "-f", str(COMPOSE_ADDON),
+         "--env-file", str(ENV_FILE),
+         "up", "-d", "--remove-orphans"],
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        text=True, cwd=str(STACK_DIR),
+    )
+    for line in proc.stdout:
+        clean = ansi.sub("", line).rstrip()
+        if clean:
+            log_fn(clean)
+    proc.wait()
+    if proc.returncode != 0:
+        log_fn(f"✗ docker compose exited with code {proc.returncode}")
+        return False
+
+    log_fn("→ Running database migrations…")
+    mig = subprocess.run([
+        "docker", "compose",
+        "-f", str(COMPOSE_FILE), "--env-file", str(ENV_FILE),
+        "run", "--rm",
+        "-e", "PYTHONPATH=/app:/app/shared_lib:/app/knowledge_lib",
+        "--entrypoint", "", "gateway",
+        "sh", "-c", "cd /app/knowledge_lib && alembic upgrade head",
+    ], capture_output=True, text=True, cwd=str(STACK_DIR))
+    for line in (mig.stdout + mig.stderr).splitlines():
+        if line.strip():
+            log_fn(line)
+    log_fn("✓ Migrations applied." if mig.returncode == 0
+           else "⚠ Migrations failed — stack running but DB may be incomplete.")
+
+    log_fn("→ Connecting add-on to HIS network…")
+    hostname = os.environ.get("HOSTNAME", "")
+    if hostname:
+        r = subprocess.run(["docker", "network", "connect", "his_his_net", hostname],
+                           capture_output=True, text=True)
+        log_fn("✓ Joined his_his_net." if r.returncode == 0
+               else f"  (network: {r.stderr.strip() or 'already connected'})")
     return True
 
 
@@ -579,7 +625,7 @@ async def uninstall():
                 "-f", str(COMPOSE_FILE), "-f", str(COMPOSE_ADDON),
                 "--env-file", str(ENV_FILE),
                 "down", "--volumes", "--remove-orphans", "--timeout", "30",
-            ], cwd=str(REPO_DIR))
+            ], cwd=str(STACK_DIR))
             for l in lines: yield f"data: {l}\n\n"
             yield "data: ✓ Containers and volumes removed.\n\n" if code == 0 \
                 else "data: ⚠ compose down reported errors (continuing).\n\n"
