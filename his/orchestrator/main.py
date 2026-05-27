@@ -817,6 +817,7 @@ _WIZARD_HTML = r"""<!DOCTYPE html>
 </div>
 
 <script>
+const API_BASE = window.location.pathname.replace(/\/+$/, '');
 const PROVIDERS=[
   {id:'gemini',icon:'🟣',label:'Gemini',badge:'Free',badgeClass:'badge-free',
    desc:'Google — best-in-class embeddings, generous free tier.',
@@ -1071,8 +1072,6 @@ function startUninstall(){
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 window.addEventListener('DOMContentLoaded',()=>{
-  // Derive API base from current page URL so calls work under HA ingress path
-  const API_BASE = window.location.pathname.replace(/\/+$/, '');
   renderProviderList();
   setTimeout(()=>{
     if(!val('his_api_token'))document.getElementById('his_api_token').value=hexRand(32);
