@@ -1,7 +1,7 @@
 ---
 name: "Household Intelligence System"
 description: "AI-native household operating system — memory, agents, and automation intelligence for Home Assistant."
-version: "0.1.0"
+version: "0.1.1"
 slug: "his"
 url: "https://github.com/cranetm/hisor"
 
@@ -24,8 +24,15 @@ ports_description:
   8099/tcp: "HIS gateway (internal API + admin UI)"
 
 # ── Docker socket access (required to manage sibling containers) ──────────────
+# docker_api: true  — mounts /var/run/docker.sock into the container (read-only per docs,
+#                     but sufficient for the Docker daemon socket protocol which is TCP-like).
+# full_access: true — disables the seccomp/apparmor profile; needed for docker compose ops.
+#                     User must turn off "Protection Mode" in the add-on settings UI.
 hassio_roles:
   - manager
+docker_api: true
+full_access: true
+protection: false
 
 # ── Persistent storage ────────────────────────────────────────────────────────
 # /data  — add-on persistent data (managed by HA supervisor)
