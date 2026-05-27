@@ -51,12 +51,12 @@ app = FastAPI(title="HIS Orchestrator", docs_url=None, redoc_url=None)
 
 HIS_DIR       = pathlib.Path("/share/his")
 REPO_DIR      = HIS_DIR / "repo"                 # git clone target
-STACK_DIR     = REPO_DIR / "his"                 # docker-compose.yml lives here
+STACK_DIR     = REPO_DIR                         # docker-compose.yml is at repo root
 ENV_FILE      = STACK_DIR / ".env"
 ENV_STAGING   = HIS_DIR / ".env.staging"         # written pre-clone, moved into repo after
 CONFIG_FILE   = HIS_DIR / "orchestrator.json"    # persists repo_url + token
 COMPOSE_FILE  = STACK_DIR / "docker-compose.yml"
-COMPOSE_ADDON = pathlib.Path("/his/docker-compose.addon.yml")
+COMPOSE_ADDON = STACK_DIR / "ha-addon" / "docker-compose.addon.yml"
 READY_FLAG    = pathlib.Path("/tmp/his_stack_ready")
 
 # ── Supervisor cache ───────────────────────────────────────────────────────────
@@ -304,7 +304,7 @@ def _run_compose(log_fn) -> bool:
          "--env-file", str(ENV_FILE),
          "up", "-d", "--remove-orphans"],
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-        text=True, cwd=str(REPO_DIR),
+        text=True, cwd=str(STACK_DIR),
     )
     for line in proc.stdout:
         clean = ansi.sub("", line).rstrip()
@@ -323,7 +323,7 @@ def _run_compose(log_fn) -> bool:
         "-e", "PYTHONPATH=/app:/app/shared_lib:/app/knowledge_lib",
         "--entrypoint", "", "gateway",
         "sh", "-c", "cd /app/knowledge_lib && alembic upgrade head",
-    ], capture_output=True, text=True, cwd=str(REPO_DIR))
+    ], capture_output=True, text=True, cwd=str(STACK_DIR))
     for line in (mig.stdout + mig.stderr).splitlines():
         if line.strip():
             log_fn(line)
@@ -739,7 +739,7 @@ _WIZARD_HTML = r"""<!DOCTYPE html>
         <span class="section-title">HIS Repository</span>
         <span class="badge badge-req">Required</span>
       </div>
-      <p class="text-slate-400 text-sm mb-4">The HIS source repository to clone and run.</p>
+      <p class="text-slate-400 text-sm mb-4">The private HIS application repository to clone and run. <strong class="text-slate-300">Not</strong> this orchestrator repo.</p>
       <div class="space-y-4">
         <div>
           <label>Repository URL</label>

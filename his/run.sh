@@ -7,10 +7,10 @@
 set -euo pipefail
 
 HIS_DIR="/share/his"
-ENV_FILE="${HIS_DIR}/repo/his/.env"
+ENV_FILE="${HIS_DIR}/repo/.env"
 READY_FLAG="/tmp/his_stack_ready"
-COMPOSE_FILE="${HIS_DIR}/repo/his/docker-compose.yml"
-COMPOSE_ADDON="/his/docker-compose.addon.yml"
+COMPOSE_FILE="${HIS_DIR}/repo/docker-compose.yml"
+COMPOSE_ADDON="${HIS_DIR}/repo/ha-addon/docker-compose.addon.yml"
 
 log() { echo "[HIS] $*"; }
 
