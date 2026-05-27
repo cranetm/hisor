@@ -1,0 +1,48 @@
+---
+name: "Household Intelligence System"
+description: "AI-native household operating system — memory, agents, and automation intelligence for Home Assistant."
+version: "0.1.0"
+slug: "his"
+url: "https://github.com/your-org/HIS"
+
+# ── Architecture ──────────────────────────────────────────────────────────────
+# This add-on is an orchestrator: it pulls and manages the full HIS Docker stack
+# (postgres+pgvector, gateway, ingestion) via the Docker socket.
+# HA ingress proxies through nginx inside this container → gateway container.
+
+# ── Ingress (served through HA UI) ───────────────────────────────────────────
+ingress: true
+ingress_port: 8099
+panel_icon: "mdi:home-assistant"
+panel_title: "HIS"
+
+# ── Ports (LAN access — HA → HIS API calls) ──────────────────────────────────
+ports:
+  8099/tcp: 8099
+
+ports_description:
+  8099/tcp: "HIS gateway (internal API + admin UI)"
+
+# ── Docker socket access (required to manage sibling containers) ──────────────
+hassio_roles:
+  - manager
+
+# ── Persistent storage ────────────────────────────────────────────────────────
+# /data  — add-on persistent data (managed by HA supervisor)
+# /share/his — HIS repo + stack files (shared with sibling containers)
+map:
+  - share:rw
+
+# ── Resources ─────────────────────────────────────────────────────────────────
+# The orchestrator itself is tiny; real load is in the managed containers.
+init: false
+startup: "application"
+
+# ── Architecture support ──────────────────────────────────────────────────────
+arch:
+  - amd64
+  - aarch64
+
+# ── Options schema (minimal — wizard handles real config) ─────────────────────
+options: {}
+schema: {}
