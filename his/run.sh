@@ -130,7 +130,10 @@ run_proxy() {
 
 mkdir -p "${HIS_DIR}"
 
-if [ ! -f "${ENV_FILE}" ]; then
+# Enter wizard mode if:
+#   - .env doesn't exist, OR
+#   - the HIS stack has never been deployed (no docker-compose.yml in repo)
+if [ ! -f "${ENV_FILE}" ] || [ ! -f "${COMPOSE_FILE}" ]; then
     run_wizard
 fi
 
