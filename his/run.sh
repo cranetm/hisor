@@ -6,6 +6,7 @@ ENV_FILE="${HIS_DIR}/repo/.env"
 READY_FLAG="/tmp/his_stack_ready"
 COMPOSE_FILE="${HIS_DIR}/repo/docker-compose.yml"
 COMPOSE_ADDON="${HIS_DIR}/repo/ha-addon/docker-compose.addon.yml"
+COMMIT_FILE="${HIS_DIR}/.last_deployed_commit"
 
 log() { echo "[HIS] $*"; }
 
@@ -113,14 +114,47 @@ run_wizard() {
     wait "${WIZARD_PID}" 2>/dev/null || true
 }
 
+# ── Update check ──────────────────────────────────────────────────────────────
+# Pull the latest repo commits and return 0 if anything changed, 1 if not.
+# Stores the deployed commit hash in COMMIT_FILE for comparison on next boot.
+
+pull_and_check_update() {
+    local repo_dir="${HIS_DIR}/repo"
+    [ -d "${repo_dir}/.git" ] || return 1
+
+    local before after
+    before=$(git -C "${repo_dir}" rev-parse HEAD 2>/dev/null || echo "unknown")
+
+    log "Checking for HIS repo updates…"
+    git -C "${repo_dir}" pull --ff-only 2>&1 | tail -3 || true
+
+    after=$(git -C "${repo_dir}" rev-parse HEAD 2>/dev/null || echo "unknown")
+    local last_deployed
+    last_deployed=$(cat "${COMMIT_FILE}" 2>/dev/null || echo "")
+
+    if [ "${after}" != "${last_deployed}" ]; then
+        log "Update detected: ${last_deployed:0:8} → ${after:0:8}"
+        echo "${after}" > "${COMMIT_FILE}"
+        return 0   # updated
+    fi
+
+    log "Already up to date (${after:0:8})."
+    return 1   # no change
+}
+
 # ── Proxy mode ────────────────────────────────────────────────────────────────
 
 run_proxy() {
     log "Proxy mode — forwarding HA ingress → his_gateway:8000"
 
     if [ -f "${COMPOSE_FILE}" ]; then
-        log "Ensuring HIS stack is up…"
-        compose_up 2>&1 | tail -10 || true
+        if pull_and_check_update; then
+            log "Rebuilding and recreating containers after update…"
+            compose_up --build --force-recreate 2>&1 | tail -20 || true
+        else
+            log "Ensuring HIS stack is up…"
+            compose_up 2>&1 | tail -10 || true
+        fi
     fi
 
     join_his_net
