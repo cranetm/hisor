@@ -1,7 +1,7 @@
 ---
 name: "Household Intelligence System"
 description: "AI-native household operating system — memory, agents, and automation intelligence for Home Assistant."
-version: "0.2.8"
+version: "0.2.9"
 slug: "his"
 url: "https://github.com/cranetm/hisor"
 
@@ -13,7 +13,7 @@ url: "https://github.com/cranetm/hisor"
 # ── Ingress (served through HA UI) ───────────────────────────────────────────
 ingress: true
 ingress_port: 8099
-ingress_entry: /admin
+ingress_entry: admin
 panel_icon: "mdi:home-assistant"
 panel_title: "HIS"
 
