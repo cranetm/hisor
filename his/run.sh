@@ -56,10 +56,16 @@ compose_ps() {
 }
 
 join_his_net() {
-    local net="his_his_net"   # project "his" + network name "his_net"
-    docker network connect "${net}" "${HOSTNAME}" 2>/dev/null \
-        && log "Joined ${net}" \
-        || log "Already in ${net} (or connect failed — nginx may fall back to host network)"
+    local net="his_his_net"
+    # HA sets HOSTNAME to the slug, but Docker knows the container by its ID.
+    # Read the real 64-char container ID from /proc/self/cgroup.
+    local cid
+    cid=$(grep -oP '(?<=/docker/)[a-f0-9]{64}' /proc/self/cgroup 2>/dev/null | head -1 \
+        || grep -oP '(?<=docker-)[a-f0-9]{64}(?=\.scope)' /proc/self/cgroup 2>/dev/null | head -1 \
+        || echo "${HOSTNAME}")
+    docker network connect "${net}" "${cid}" 2>/dev/null \
+        && log "Joined ${net} (${cid:0:12})" \
+        || log "Already in ${net} or connect failed — nginx may not reach his_gateway"
 }
 
 # ── nginx ─────────────────────────────────────────────────────────────────────
