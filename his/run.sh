@@ -16,11 +16,10 @@ log() { echo "[HIS] $*"; }
 
 shutdown() {
     log "Shutting down HIS stack…"
-    # Stop individual containers directly — faster and more reliable than
-    # compose down, and completes well within Docker's SIGKILL window.
-    for cname in his_gateway his_ingestion his_postgres; do
-        docker stop --time 8 "${cname}" 2>/dev/null || true
-    done
+    # Stop all containers in parallel — sequential stops (8s each) would exceed
+    # Docker's SIGKILL window and leave the last container(s) running.
+    docker stop --time 8 his_gateway his_ingestion his_postgres 2>/dev/null &
+    wait $!
     nginx -s quit 2>/dev/null || true
     log "HIS stopped."
     exit 0
