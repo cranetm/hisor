@@ -314,15 +314,19 @@ def _run_compose(log_fn) -> bool:
         log_fn(f"⚠ Migrations failed (exit {mig.returncode}) — check gateway logs.")
 
     log_fn("→ Connecting add-on to HIS network…")
-    # Extract the real 64-char container ID from /proc/self/cgroup.
-    # HA sets HOSTNAME to the addon slug which Docker doesn't recognise.
+    # cgroupv2 (HA OS) doesn't embed the container ID in /proc/self/cgroup.
+    # Find the addon container by matching its name pattern.
     container_id = ""
     try:
-        import re as _re
-        cgroup = pathlib.Path("/proc/self/cgroup").read_text()
-        m = _re.search(r'[a-f0-9]{64}', cgroup)
-        if m:
-            container_id = m.group(0)
+        result = subprocess.run(
+            ["docker", "ps", "--format", "{{.ID}} {{.Names}}"],
+            capture_output=True, text=True,
+        )
+        for line in result.stdout.splitlines():
+            parts = line.strip().split()
+            if len(parts) == 2 and parts[1].startswith("addon_") and parts[1].endswith("_his"):
+                container_id = parts[0]
+                break
     except Exception:
         pass
     if container_id:
@@ -331,7 +335,7 @@ def _run_compose(log_fn) -> bool:
         log_fn(f"✓ Joined his_his_net ({container_id[:12]})." if r.returncode == 0
                else f"  (network join: {r.stderr.strip() or 'already connected'})")
     else:
-        log_fn("⚠ Could not determine container ID — network join skipped.")
+        log_fn("⚠ Could not determine addon container ID — network join skipped.")
     return True
 
 

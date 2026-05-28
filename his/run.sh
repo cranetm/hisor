@@ -53,9 +53,12 @@ compose_ps() {
 join_his_net() {
     local net="his_his_net"
     local cid
-    cid=$(grep -oE '[a-f0-9]{64}' /proc/self/cgroup 2>/dev/null | head -1) || true
+    # cgroupv2 (HA OS) doesn't embed the container ID in /proc/self/cgroup.
+    # Find our own container by matching the addon name pattern (*_his).
+    cid=$(docker ps --format '{{.ID}} {{.Names}}' 2>/dev/null \
+        | grep '[[:space:]]addon_.*_his$' | awk '{print $1}' | head -1) || true
     if [ -z "${cid}" ]; then
-        log "⚠ Could not determine container ID — skipping network join"
+        log "⚠ Could not determine addon container ID — skipping network join"
         return 0
     fi
     docker network connect "${net}" "${cid}" 2>/dev/null \
