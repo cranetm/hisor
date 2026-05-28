@@ -147,6 +147,11 @@ pull_and_check_update() {
 run_proxy() {
     log "Proxy mode — forwarding HA ingress → his_gateway:8000"
 
+    # Start nginx immediately so HA ingress has something to talk to on :8099.
+    # The loading page (error_page 502/503/504) covers the window while
+    # his_gateway is still starting up.
+    start_nginx
+
     if [ -f "${COMPOSE_FILE}" ]; then
         if pull_and_check_update; then
             log "Rebuilding and recreating containers after update…"
@@ -158,7 +163,6 @@ run_proxy() {
     fi
 
     join_his_net
-    start_nginx
 
     # Watchdog: restart stack if containers go missing; exit if uninstall was triggered
     while true; do
