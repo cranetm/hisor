@@ -61,9 +61,23 @@ join_his_net() {
         log "⚠ Could not determine addon container ID — skipping network join"
         return 0
     fi
-    docker network connect "${net}" "${cid}" 2>/dev/null \
-        && log "Joined ${net} (${cid:0:12})" \
-        || log "Already in ${net} (${cid:0:12})"
+    # Retry until connected so nginx can resolve his_gateway DNS immediately.
+    local i=0
+    while [ $i -lt 15 ]; do
+        if docker network connect "${net}" "${cid}" 2>/dev/null; then
+            log "Joined ${net} (${cid:0:12})"
+            return 0
+        fi
+        # Check if already connected (connect returns non-zero in that case too)
+        if docker network inspect "${net}" --format '{{range .Containers}}{{.ID}} {{end}}' 2>/dev/null \
+                | grep -q "${cid}"; then
+            log "Already in ${net} (${cid:0:12})"
+            return 0
+        fi
+        i=$((i+1))
+        sleep 2
+    done
+    log "⚠ Could not join ${net} after retries"
     return 0
 }
 
