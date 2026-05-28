@@ -79,9 +79,9 @@ def _supervisor_get(path: str) -> dict:
 def _ha_internal_url() -> str:
     try:
         data = _supervisor_get("/core/info")
-        return data.get("data", {}).get("homeassistant_url") or "http://homeassistant.local:8123"
+        return data.get("data", {}).get("homeassistant_url") or "http://homeassistant:8123"
     except Exception:
-        return "http://homeassistant.local:8123"
+        return "http://homeassistant:8123"
 
 
 def _create_ha_token(name: str = "HIS") -> str:
@@ -416,6 +416,16 @@ async def health():
     return {"status": "ok", "mode": "wizard"}
 
 
+@app.get("/api-token")
+async def api_token():
+    """Return HIS_API_TOKEN from .env so the admin UI can bootstrap auth."""
+    env = _read_env()
+    token = env.get("HIS_API_TOKEN", "")
+    if not token:
+        raise HTTPException(404, "Token not configured yet")
+    return {"token": token}
+
+
 @app.get("/prefill")
 async def prefill():
     env = _read_env()
@@ -478,7 +488,7 @@ async def configure(request: Request):
     if fields.get("ha_token") == "__from_prefill__":
         fields["ha_token"] = _supervisor_ha_token
     if not fields.get("ha_url") or fields.get("ha_url") == "__from_prefill__":
-        fields["ha_url"] = _supervisor_ha_url or "http://homeassistant.local:8123"
+        fields["ha_url"] = _supervisor_ha_url or "http://homeassistant:8123"
     if not fields.get("ha_token", "").strip():
         return {"ok": False, "error": "Home Assistant token could not be auto-provisioned. Please enter it manually in the HA section."}
 
@@ -1157,8 +1167,8 @@ function startDeploy(isUninstall=false){
     es.close();
     status.innerHTML=isUninstall
       ?`<div class="text-green-400 font-semibold">✅ Uninstall complete.</div><p class="text-slate-400 text-sm mt-2">You can now remove the add-on from HA Settings → Add-ons.</p>`
-      :`<div class="text-green-400 font-semibold mb-3">✅ HIS installed!</div><p class="text-slate-400 text-sm">Reloading in 5 seconds…</p>`;
-    if(!isUninstall)setTimeout(()=>location.reload(),5000);
+      :`<div class="text-green-400 font-semibold mb-3">✅ HIS installed!</div><p class="text-slate-400 text-sm">Opening admin in 3 seconds…</p>`;
+    if(!isUninstall)setTimeout(()=>location.reload(),3000);
   });
   es.addEventListener('error',()=>{es.close();status.textContent=`❌ ${isUninstall?'Uninstall':'Install'} failed — check the log.`;status.className='mt-4 text-sm text-red-400';});
 }
