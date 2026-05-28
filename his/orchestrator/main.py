@@ -314,7 +314,9 @@ def _run_compose(log_fn) -> bool:
         log_fn(f"⚠ Migrations failed (exit {mig.returncode}) — check gateway logs.")
 
     log_fn("→ Connecting add-on to HIS network…")
-    hostname = os.environ.get("HOSTNAME", "")
+    # HOSTNAME is a bash special variable, not exported to env — use socket instead.
+    import socket
+    hostname = socket.gethostname()
     if hostname:
         r = subprocess.run(["docker", "network", "connect", "his_his_net", hostname],
                            capture_output=True, text=True)
