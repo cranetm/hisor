@@ -314,34 +314,24 @@ def _run_compose(log_fn) -> bool:
         log_fn(f"⚠ Migrations failed (exit {mig.returncode}) — check gateway logs.")
 
     log_fn("→ Connecting add-on to HIS network…")
-    # HA sets the container hostname to the slug (e.g. "b2de1389-his") but
-    # Docker knows it by its container ID. Read the real ID from cgroup.
+    # Extract the real 64-char container ID from /proc/self/cgroup.
+    # HA sets HOSTNAME to the addon slug which Docker doesn't recognise.
     container_id = ""
     try:
+        import re as _re
         cgroup = pathlib.Path("/proc/self/cgroup").read_text()
-        for line in cgroup.splitlines():
-            # line format: "12:cpuset:/docker/<id>" or "0::/system.slice/docker-<id>.scope"
-            parts = line.split("/")
-            for part in reversed(parts):
-                part = part.replace(".scope", "")
-                if part.startswith("docker-"):
-                    container_id = part[len("docker-"):]
-                    break
-                if len(part) == 64 and all(c in "0123456789abcdef" for c in part):
-                    container_id = part
-                    break
-            if container_id:
-                break
+        m = _re.search(r'[a-f0-9]{64}', cgroup)
+        if m:
+            container_id = m.group(0)
     except Exception:
         pass
-    if not container_id:
-        import socket
-        container_id = socket.gethostname()
     if container_id:
         r = subprocess.run(["docker", "network", "connect", "his_his_net", container_id],
                            capture_output=True, text=True)
-        log_fn(f"✓ Joined his_his_net (id={container_id[:12]})." if r.returncode == 0
-               else f"  (network: {r.stderr.strip() or 'already connected'})")
+        log_fn(f"✓ Joined his_his_net ({container_id[:12]})." if r.returncode == 0
+               else f"  (network join: {r.stderr.strip() or 'already connected'})")
+    else:
+        log_fn("⚠ Could not determine container ID — network join skipped.")
     return True
 
 
