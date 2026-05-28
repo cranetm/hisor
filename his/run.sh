@@ -16,14 +16,11 @@ log() { echo "[HIS] $*"; }
 
 shutdown() {
     log "Shutting down HIS stack…"
-    if [ -f "${COMPOSE_FILE}" ] && [ -f "${ENV_FILE}" ]; then
-        docker compose \
-            --project-name his \
-            -f "${COMPOSE_FILE}" \
-            -f "${COMPOSE_ADDON}" \
-            --env-file "${ENV_FILE}" \
-            down --timeout 30 2>&1 | tail -10 || true
-    fi
+    # Stop individual containers directly — faster and more reliable than
+    # compose down, and completes well within Docker's SIGKILL window.
+    for cname in his_gateway his_ingestion his_postgres; do
+        docker stop --time 8 "${cname}" 2>/dev/null || true
+    done
     nginx -s quit 2>/dev/null || true
     log "HIS stopped."
     exit 0
@@ -124,13 +121,17 @@ pull_and_check_update() {
 
     local before after
     before=$(git -C "${repo_dir}" rev-parse HEAD 2>/dev/null || echo "unknown")
-
-    log "Checking for HIS repo updates…"
-    git -C "${repo_dir}" pull --ff-only 2>&1 | tail -3 || true
-
-    after=$(git -C "${repo_dir}" rev-parse HEAD 2>/dev/null || echo "unknown")
     local last_deployed
     last_deployed=$(cat "${COMMIT_FILE}" 2>/dev/null || echo "")
+
+    log "Checking for HIS repo updates…"
+    # Use fetch + reset instead of pull --ff-only: works on shallow clones too.
+    local branch
+    branch=$(git -C "${repo_dir}" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "main")
+    git -C "${repo_dir}" fetch --depth=1 origin "${branch}" 2>&1 | tail -3 || true
+    git -C "${repo_dir}" reset --hard "origin/${branch}" 2>&1 | tail -2 || true
+
+    after=$(git -C "${repo_dir}" rev-parse HEAD 2>/dev/null || echo "unknown")
 
     if [ "${after}" != "${last_deployed}" ]; then
         log "Update detected: ${last_deployed:0:8} → ${after:0:8}"
