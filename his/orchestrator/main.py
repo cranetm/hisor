@@ -163,7 +163,7 @@ TELEGRAM_ALLOWED_USER_IDS={telegram_allowed_user_ids}
 
 HIS_API_TOKEN={his_api_token}
 PUBLIC_BASE_URL={public_base_url}
-HIS_PATH_PREFIX=/his
+HIS_PATH_PREFIX=
 
 POSTGRES_PASSWORD={postgres_password}
 POSTGRES_URL=postgresql+asyncpg://his:{postgres_password}@his_postgres:5432/his
