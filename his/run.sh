@@ -1,10 +1,5 @@
 #!/usr/bin/env bash
 # HIS Add-on entrypoint
-# Modes:
-#   WIZARD  — .env missing → start orchestrator wizard on port 8099, wait for /tmp/his_stack_ready
-#   PROXY   — .env exists  → stack is running, nginx proxies HA ingress → his_gateway:8000
-
-set -euo pipefail
 
 HIS_DIR="/share/his"
 ENV_FILE="${HIS_DIR}/repo/.env"
@@ -57,16 +52,16 @@ compose_ps() {
 
 join_his_net() {
     local net="his_his_net"
-    # Extract the 64-char container ID from cgroup — works on cgroupv1 and v2.
     local cid
-    cid=$(grep -oE '[a-f0-9]{64}' /proc/self/cgroup 2>/dev/null | head -1)
+    cid=$(grep -oE '[a-f0-9]{64}' /proc/self/cgroup 2>/dev/null | head -1) || true
     if [ -z "${cid}" ]; then
         log "⚠ Could not determine container ID — skipping network join"
-        return
+        return 0
     fi
     docker network connect "${net}" "${cid}" 2>/dev/null \
         && log "Joined ${net} (${cid:0:12})" \
         || log "Already in ${net} (${cid:0:12})"
+    return 0
 }
 
 # ── nginx ─────────────────────────────────────────────────────────────────────
