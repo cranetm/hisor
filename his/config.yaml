@@ -31,6 +31,7 @@ ports_description:
 #                     User must turn off "Protection Mode" in the add-on settings UI.
 hassio_roles:
   - manager
+hassio_api: true
 docker_api: true
 full_access: true
 protection: false
