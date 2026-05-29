@@ -143,6 +143,9 @@ POSTGRES_PASSWORD={postgres_password}
 POSTGRES_URL=postgresql+asyncpg://his:{postgres_password}@his_postgres:5432/his
 POSTGRES_URL_SYNC=postgresql+psycopg2://his:{postgres_password}@his_postgres:5432/his
 
+# Injected at deploy time by the orchestrator — do not edit manually
+SUPERVISOR_TOKEN=
+
 ENV=production
 LOG_LEVEL=INFO
 GATEWAY_HOST=0.0.0.0
@@ -234,6 +237,21 @@ def _run_compose(log_fn) -> bool:
         "-f", str(COMPOSE_FILE), "-f", str(COMPOSE_ADDON),
         "--env-file", str(ENV_FILE),
     ]
+
+    # Refresh SUPERVISOR_TOKEN in .env before every compose run.
+    # --env-file takes precedence over subprocess env in Docker Compose v2,
+    # so we must write the token into the file for gateway+ingestion to receive it.
+    if SUPERVISOR_TOKEN and ENV_FILE.exists():
+        try:
+            content = ENV_FILE.read_text(encoding="utf-8")
+            if "SUPERVISOR_TOKEN=" in content:
+                content = re.sub(r"^SUPERVISOR_TOKEN=.*$", f"SUPERVISOR_TOKEN={SUPERVISOR_TOKEN}", content, flags=re.MULTILINE)
+            else:
+                content += f"\nSUPERVISOR_TOKEN={SUPERVISOR_TOKEN}\n"
+            ENV_FILE.write_text(content, encoding="utf-8")
+            log_fn("✓ SUPERVISOR_TOKEN refreshed in .env")
+        except Exception as exc:
+            log_fn(f"⚠ Could not write SUPERVISOR_TOKEN to .env: {exc}")
 
     # Always wipe postgres container + volume before deploy so that a freshly
     # generated POSTGRES_PASSWORD in .env matches the DB initialisation.
