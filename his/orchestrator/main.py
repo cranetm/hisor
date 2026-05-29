@@ -254,6 +254,16 @@ def _run_compose(log_fn) -> bool:
                            capture_output=True)
             log_fn("✓ Stale volume removed — DB will be re-initialised.")
 
+    # Remove any stale containers that would cause name conflicts
+    for name in ("his_gateway", "his_ingestion"):
+        r = subprocess.run(
+            ["docker", "inspect", "--format", "{{.State.Status}}", name],
+            capture_output=True, text=True,
+        )
+        if r.returncode == 0 and r.stdout.strip() != "running":
+            log_fn(f"→ Removing stale container {name}…")
+            subprocess.run(["docker", "rm", "-f", name], capture_output=True)
+
     proc = subprocess.Popen(
         COMPOSE_CMD + ["up", "-d", "--remove-orphans"],
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
