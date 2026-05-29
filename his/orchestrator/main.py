@@ -1231,5 +1231,7 @@ window.addEventListener('DOMContentLoaded',()=>{
 
 @app.get("/", response_class=HTMLResponse)
 @app.get("", response_class=HTMLResponse)
+@app.get("/admin", response_class=HTMLResponse)
+@app.get("/admin/", response_class=HTMLResponse)
 async def wizard_ui():
     return HTMLResponse(_WIZARD_HTML)
