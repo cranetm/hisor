@@ -61,7 +61,6 @@ READY_FLAG    = pathlib.Path("/tmp/his_stack_ready")
 
 # ── Supervisor cache ───────────────────────────────────────────────────────────
 
-_supervisor_ha_token: str = ""
 _supervisor_ha_url: str = ""
 SUPERVISOR_TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")
 SUPERVISOR_API   = "http://supervisor"
@@ -84,32 +83,10 @@ def _ha_internal_url() -> str:
         return "http://homeassistant:8123"
 
 
-def _create_ha_token(name: str = "HIS") -> str:
-    try:
-        payload = json.dumps({"name": name}).encode()
-        req = urllib.request.Request(
-            f"{SUPERVISOR_API}/core/api/auth/long_lived_access_token",
-            data=payload,
-            headers={
-                "Authorization": f"Bearer {SUPERVISOR_TOKEN}",
-                "Content-Type": "application/json",
-            },
-            method="POST",
-        )
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            return json.loads(resp.read()).get("token", "")
-    except Exception as exc:
-        logger.warning("Could not auto-create HA token: %s", exc)
-        return ""
-
-
 def _init_supervisor_cache() -> None:
-    global _supervisor_ha_token, _supervisor_ha_url
+    global _supervisor_ha_url
     _supervisor_ha_url = _ha_internal_url()
-    existing = _read_env()
-    _supervisor_ha_token = existing.get("HA_TOKEN") or _create_ha_token("HIS")
-    logger.info("Supervisor: HA URL=%s token=%s", _supervisor_ha_url,
-                "ok" if _supervisor_ha_token else "FAILED")
+    logger.info("Supervisor: HA URL=%s", _supervisor_ha_url)
 
 
 @app.on_event("startup")
@@ -155,7 +132,6 @@ OLLAMA_BASE_URL={ollama_base_url}
 OLLAMA_MODEL={ollama_model}
 
 HA_URL={ha_url}
-HA_TOKEN={ha_token}
 
 TELEGRAM_BOT_TOKEN={telegram_bot_token}
 TELEGRAM_WEBHOOK_SECRET={telegram_webhook_secret}
@@ -422,8 +398,6 @@ async def prefill():
     result = {k: v for k, v in env.items() if v not in ("...", "")}
     if not result.get("HA_URL") and _supervisor_ha_url:
         result["HA_URL"] = _supervisor_ha_url
-    if not result.get("HA_TOKEN") and _supervisor_ha_token:
-        result["HA_TOKEN"] = _supervisor_ha_token
     if orc.get("repo_url"):
         result["REPO_URL"] = orc["repo_url"]
     if orc.get("repo_token"):
@@ -432,7 +406,7 @@ async def prefill():
         "REPO_URL", "REPO_TOKEN",
         "GEMINI_API_KEY", "GEMINI_MODEL", "GROQ_API_KEY", "GROQ_MODEL",
         "OPENROUTER_API_KEY", "OPENROUTER_MODEL", "OLLAMA_BASE_URL", "OLLAMA_MODEL",
-        "LLM_PRIMARY_PROVIDER", "HA_URL", "HA_TOKEN", "TELEGRAM_BOT_TOKEN",
+        "LLM_PRIMARY_PROVIDER", "HA_URL", "TELEGRAM_BOT_TOKEN",
         "TELEGRAM_ALLOWED_USER_IDS", "PUBLIC_BASE_URL", "POSTGRES_PASSWORD",
     ]
     return {k: result[k] for k in keys if k in result}
@@ -474,11 +448,9 @@ async def configure(request: Request):
         return {"ok": False, "error": "At least one AI provider is required."}
 
     if fields.get("ha_token") == "__from_prefill__":
-        fields["ha_token"] = _supervisor_ha_token
+        fields.pop("ha_token", None)
     if not fields.get("ha_url") or fields.get("ha_url") == "__from_prefill__":
         fields["ha_url"] = _supervisor_ha_url or "http://homeassistant:8123"
-    if not fields.get("ha_token", "").strip():
-        return {"ok": False, "error": "Home Assistant token could not be auto-provisioned. Please enter it manually in the HA section."}
 
     fields.setdefault("llm_primary_provider", "gemini")
     fields.setdefault("embedding_provider", "gemini")
@@ -489,7 +461,8 @@ async def configure(request: Request):
     fields.setdefault("openrouter_model", "deepseek/deepseek-v4-flash:free")
     fields.setdefault("ollama_base_url", "http://ollama:11434")
     fields.setdefault("ollama_model", "llama3.2:3b")
-    fields.setdefault("ha_url", "http://homeassistant.local:8123")
+    fields.setdefault("ha_url", "http://homeassistant:8123")
+    fields.pop("ha_token", None)  # never stored — SUPERVISOR_TOKEN used at runtime
     fields.setdefault("public_base_url", "")
     fields.setdefault("telegram_bot_token", "")
     fields.setdefault("telegram_webhook_secret", secrets.token_hex(16))
@@ -838,24 +811,7 @@ _WIZARD_HTML = r"""<!DOCTYPE html>
       </div>
     </div>
 
-    <!-- ⑤ Home Assistant (auto-provisioned) -->
-    <div class="card mb-4">
-      <div class="flex items-center gap-2 mb-3">
-        <span class="section-title">Home Assistant</span>
-        <span class="badge badge-auto" id="ha-badge">⚡ Auto-configured</span>
-      </div>
-      <p class="text-slate-400 text-sm" id="ha-desc">HA URL and access token are automatically provided by the HA Supervisor.</p>
-      <!-- Hidden token field — filled by prefill; shown as fallback if auto-provision fails -->
-      <div id="ha-token-fallback" class="hidden mt-3">
-        <label>HA Access Token</label>
-        <input type="password" id="ha_token" placeholder="eyJ…" autocomplete="off">
-        <p class="hint">HA → Profile → Security → Long-Lived Access Tokens → Create Token</p>
-      </div>
-      <input type="hidden" id="ha_token_hidden">
-      <p class="hint mt-2">Override URL in Advanced settings if needed.</p>
-    </div>
-
-    <!-- ⑥ Advanced -->
+    <!-- ⑤ Advanced -->
     <div class="card mb-6">
       <details>
         <summary class="cursor-pointer text-slate-400 text-sm py-2 select-none hover:text-slate-300">▶ Advanced settings</summary>
@@ -1116,7 +1072,6 @@ function configure(){
     openrouter_api_key:ps.openrouter.key||'',openrouter_model:ps.openrouter.model,
     ollama_base_url:val('ollama_base_url')||'http://ollama:11434',ollama_model:ps.ollama.model,
     ha_url:val('ha_url')||'__from_prefill__',
-    ha_token:val('ha_token')||val('ha_token_hidden')||'__from_prefill__',
     public_base_url:val('public_base_url'),
     postgres_password:val('postgres_password'),
     telegram_bot_token:val('telegram_bot_token'),
@@ -1174,16 +1129,7 @@ window.addEventListener('DOMContentLoaded',()=>{
       PUBLIC_BASE_URL:'public_base_url',POSTGRES_PASSWORD:'postgres_password',
       OLLAMA_BASE_URL:'ollama_base_url'};
     for(const[k,field]of Object.entries(km)){if(data[k]){const el=document.getElementById(field);if(el)el.value=data[k];}}
-    // HA token — store in hidden field; show manual input if auto-provision failed
-    if(data.HA_TOKEN){
-      document.getElementById('ha_token_hidden').value=data.HA_TOKEN;
-    } else {
-      document.getElementById('ha-badge').textContent='⚠ Manual required';
-      document.getElementById('ha-badge').className='badge badge-req';
-      document.getElementById('ha-desc').textContent='Could not auto-provision HA token. Please enter one manually.';
-      document.getElementById('ha-token-fallback').classList.remove('hidden');
-    }
-    // Prefill repo fields
+    // Show uninstall if already configured
     if(data.REPO_URL){
       document.getElementById('repo_url').value=data.REPO_URL;
       document.getElementById('repo-validate-btn').disabled=false;
@@ -1193,7 +1139,7 @@ window.addEventListener('DOMContentLoaded',()=>{
     const toValidate=PROVIDERS.filter(p=>p.isOllama?data.OLLAMA_BASE_URL:ps[p.id].key);
     toValidate.forEach((p,i)=>setTimeout(()=>validateProvider(p.id),i*600));
     // Show uninstall section and update button if already configured
-    if(data.HA_TOKEN){
+    if(data.REPO_URL&&data.POSTGRES_PASSWORD){
       document.getElementById('uninstall-section').classList.remove('hidden');
       document.getElementById('deploy-btn').textContent='💾 Save & Restart HIS';
     }
