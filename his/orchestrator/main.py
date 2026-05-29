@@ -236,23 +236,13 @@ def _run_compose(log_fn) -> bool:
         "--env-file", str(ENV_FILE),
     ]
 
-    # Wipe stale postgres volume when no container exists yet.
-    # A leftover volume from a previous failed attempt has a different
-    # auto-generated password → "password authentication failed".
-    container_check = subprocess.run(
-        ["docker", "inspect", "--format", "{{.State.Status}}", "his_postgres"],
-        capture_output=True, text=True,
-    )
-    if container_check.returncode != 0:  # container doesn't exist
-        vol_check = subprocess.run(
-            ["docker", "volume", "inspect", "his_postgres_data"],
-            capture_output=True, text=True,
-        )
-        if vol_check.returncode == 0:
-            log_fn("→ Removing stale postgres volume from previous attempt…")
-            subprocess.run(["docker", "volume", "rm", "-f", "his_postgres_data"],
-                           capture_output=True)
-            log_fn("✓ Stale volume removed — DB will be re-initialised.")
+    # Always wipe postgres container + volume before deploy so that a freshly
+    # generated POSTGRES_PASSWORD in .env matches the DB initialisation.
+    # postgres data is fully owned by the stack — safe to recreate every time.
+    log_fn("→ Stopping and removing previous postgres container + data volume…")
+    subprocess.run(["docker", "rm", "-f", "his_postgres"], capture_output=True)
+    subprocess.run(["docker", "volume", "rm", "-f", "his_postgres_data"], capture_output=True)
+    log_fn("✓ Postgres reset — DB will be re-initialised with the current password.")
 
     # Remove any stale containers that would cause name conflicts
     for name in ("his_gateway", "his_ingestion"):
@@ -260,7 +250,7 @@ def _run_compose(log_fn) -> bool:
             ["docker", "inspect", "--format", "{{.State.Status}}", name],
             capture_output=True, text=True,
         )
-        if r.returncode == 0 and r.stdout.strip() != "running":
+        if r.returncode == 0:
             log_fn(f"→ Removing stale container {name}…")
             subprocess.run(["docker", "rm", "-f", name], capture_output=True)
 
@@ -280,8 +270,20 @@ def _run_compose(log_fn) -> bool:
 
     # Run migrations inside the already-running gateway container via docker exec.
     log_fn("→ Running database migrations…")
-    # Small sleep: pg_isready returns healthy before POSTGRES_USER is fully created on first boot.
-    time.sleep(3)
+    # Wait for postgres to be ready — fresh DB init takes longer than a restart.
+    # Poll pg_isready via docker exec instead of a fixed sleep.
+    for attempt in range(20):
+        pg_ready = subprocess.run(
+            ["docker", "exec", "his_postgres", "pg_isready", "-U", "his"],
+            capture_output=True, text=True,
+        )
+        if pg_ready.returncode == 0:
+            log_fn("✓ Postgres is ready.")
+            break
+        log_fn(f"  Waiting for postgres… ({attempt + 1}/20)")
+        time.sleep(3)
+    else:
+        log_fn("⚠ Postgres did not become ready in time — migrations may fail.")
     mig = subprocess.run([
         "docker", "exec",
         "his_gateway",
