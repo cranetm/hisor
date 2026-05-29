@@ -134,7 +134,6 @@ OLLAMA_MODEL={ollama_model}
 HA_URL={ha_url}
 
 TELEGRAM_BOT_TOKEN={telegram_bot_token}
-TELEGRAM_WEBHOOK_SECRET={telegram_webhook_secret}
 TELEGRAM_ALLOWED_USER_IDS={telegram_allowed_user_ids}
 
 PUBLIC_BASE_URL={public_base_url}
@@ -581,21 +580,34 @@ async def list_models(provider: str, api_key: str | None = Query(default=None)):
 async def validate_domain(request: Request):
     body = await request.json()
     url = str(body.get("url", "")).rstrip("/")
+    path_prefix = str(body.get("path_prefix", "/his")).rstrip("/")
     if not url.startswith(("http://", "https://")):
         return {"ok": False, "error": "URL must start with http:// or https://"}
+    probe_url = f"{url}{path_prefix}/health"
     try:
         ctx = ssl.create_default_context()
-        req = urllib.request.Request(url, headers={"User-Agent": "HIS/1.0"})
-        with urllib.request.urlopen(req, timeout=6, context=ctx) as resp:
-            return {"ok": resp.status < 500, "note": f"HTTP {resp.status}"}
+        req = urllib.request.Request(probe_url, headers={"User-Agent": "HIS/1.0"})
+        with urllib.request.urlopen(req, timeout=8, context=ctx) as resp:
+            body_bytes = resp.read(512)
+            try:
+                data = json.loads(body_bytes)
+                if data.get("status") == "ok":
+                    return {"ok": True, "note": "HIS health check passed ✓"}
+            except Exception:
+                pass
+            if resp.status < 400:
+                return {"ok": False, "error": "URL reachable but didn't return a HIS health response — check path prefix"}
+            return {"ok": False, "error": f"HTTP {resp.status}"}
     except Exception as exc:
         msg = str(exc)
         if "Name or service not known" in msg or "nodename nor servname" in msg:
             msg = "Domain not found"
         elif "timed out" in msg.lower():
-            msg = "Connection timed out"
+            msg = "Connection timed out — is the tunnel running?"
         elif "SSL" in msg or "certificate" in msg.lower():
             msg = "SSL error — check your HTTPS certificate"
+        elif "Connection refused" in msg:
+            msg = "Connection refused — is the tunnel running?"
         return {"ok": False, "error": msg}
 
 
@@ -1052,8 +1064,9 @@ function renderModelSelect(provider,models,current){
 // ── Domain test ───────────────────────────────────────────────────────────────
 async function testDomain(){
   const url=val('public_base_url');if(!url){showDomainStatus('Enter a URL first.',false);return;}
+  const path_prefix=val('his_path_prefix')||'/his';
   try{
-    const r=await fetch(`${API_BASE}/validate-domain`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url})});
+    const r=await fetch(`${API_BASE}/validate-domain`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url,path_prefix})});
     const d=await r.json();
     showDomainStatus(d.ok?'✓ Reachable'+(d.note?' — '+d.note:''):'✗ '+(d.error||'Not reachable'),d.ok);
   }catch(e){showDomainStatus('✗ '+e.message,false);}
@@ -1087,7 +1100,7 @@ function configure(){
     public_base_url:val('public_base_url'),
     postgres_password:val('postgres_password'),
     telegram_bot_token:val('telegram_bot_token'),
-    telegram_webhook_secret:hexRand(16),
+    telegram_webhook_secret:hexRand(16),  // auto-generated, never shown to user
     telegram_allowed_user_ids:formatIds(val('telegram_allowed_user_ids')),
   };
   const btn=document.getElementById('deploy-btn');btn.disabled=true;btn.textContent='Saving…';
