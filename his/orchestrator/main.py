@@ -161,7 +161,6 @@ TELEGRAM_BOT_TOKEN={telegram_bot_token}
 TELEGRAM_WEBHOOK_SECRET={telegram_webhook_secret}
 TELEGRAM_ALLOWED_USER_IDS={telegram_allowed_user_ids}
 
-HIS_API_TOKEN={his_api_token}
 PUBLIC_BASE_URL={public_base_url}
 HIS_PATH_PREFIX=
 
@@ -416,16 +415,6 @@ async def health():
     return {"status": "ok", "mode": "wizard"}
 
 
-@app.get("/api-token")
-async def api_token():
-    """Return HIS_API_TOKEN from .env so the admin UI can bootstrap auth."""
-    env = _read_env()
-    token = env.get("HIS_API_TOKEN", "")
-    if not token:
-        raise HTTPException(404, "Token not configured yet")
-    return {"token": token}
-
-
 @app.get("/prefill")
 async def prefill():
     env = _read_env()
@@ -444,8 +433,7 @@ async def prefill():
         "GEMINI_API_KEY", "GEMINI_MODEL", "GROQ_API_KEY", "GROQ_MODEL",
         "OPENROUTER_API_KEY", "OPENROUTER_MODEL", "OLLAMA_BASE_URL", "OLLAMA_MODEL",
         "LLM_PRIMARY_PROVIDER", "HA_URL", "HA_TOKEN", "TELEGRAM_BOT_TOKEN",
-        "TELEGRAM_WEBHOOK_SECRET", "TELEGRAM_ALLOWED_USER_IDS", "HIS_API_TOKEN",
-        "PUBLIC_BASE_URL", "POSTGRES_PASSWORD",
+        "TELEGRAM_ALLOWED_USER_IDS", "PUBLIC_BASE_URL", "POSTGRES_PASSWORD",
     ]
     return {k: result[k] for k in keys if k in result}
 
@@ -506,7 +494,6 @@ async def configure(request: Request):
     fields.setdefault("telegram_bot_token", "")
     fields.setdefault("telegram_webhook_secret", secrets.token_hex(16))
     fields.setdefault("telegram_allowed_user_ids", "[]")
-    fields.setdefault("his_api_token", secrets.token_hex(32))
     fields.setdefault("postgres_password", secrets.token_hex(16))
 
     try:
@@ -531,7 +518,6 @@ async def deploy():
         _deploy_in_progress = True
 
     async def stream():
-        import asyncio
         global _deploy_in_progress
         queue: asyncio.Queue[str | None] = asyncio.Queue()
         loop = asyncio.get_event_loop()
@@ -861,7 +847,7 @@ _WIZARD_HTML = r"""<!DOCTYPE html>
       <p class="text-slate-400 text-sm" id="ha-desc">HA URL and access token are automatically provided by the HA Supervisor.</p>
       <!-- Hidden token field — filled by prefill; shown as fallback if auto-provision fails -->
       <div id="ha-token-fallback" class="hidden mt-3">
-        <label>Long-Lived Access Token</label>
+        <label>HA Access Token</label>
         <input type="password" id="ha_token" placeholder="eyJ…" autocomplete="off">
         <p class="hint">HA → Profile → Security → Long-Lived Access Tokens → Create Token</p>
       </div>
@@ -875,13 +861,6 @@ _WIZARD_HTML = r"""<!DOCTYPE html>
         <summary class="cursor-pointer text-slate-400 text-sm py-2 select-none hover:text-slate-300">▶ Advanced settings</summary>
         <div class="space-y-4 mt-4">
           <div><label>Home Assistant URL (override)</label><input type="text" id="ha_url" placeholder="http://homeassistant.local:8123"></div>
-          <div>
-            <label>HIS API Token</label>
-            <div class="flex gap-2 mt-1">
-              <input type="text" id="his_api_token" autocomplete="off">
-              <button class="btn-sm btn-gen" onclick="gen('his_api_token',32)">↺ Gen</button>
-            </div>
-          </div>
           <div>
             <label>PostgreSQL Password</label>
             <div class="flex gap-2 mt-1">
@@ -1139,7 +1118,6 @@ function configure(){
     ha_url:val('ha_url')||'__from_prefill__',
     ha_token:val('ha_token')||val('ha_token_hidden')||'__from_prefill__',
     public_base_url:val('public_base_url'),
-    his_api_token:val('his_api_token'),
     postgres_password:val('postgres_password'),
     telegram_bot_token:val('telegram_bot_token'),
     telegram_webhook_secret:hexRand(16),
@@ -1182,7 +1160,6 @@ function startUninstall(){
 window.addEventListener('DOMContentLoaded',()=>{
   renderProviderList();
   setTimeout(()=>{
-    if(!val('his_api_token'))document.getElementById('his_api_token').value=hexRand(32);
     if(!val('postgres_password'))document.getElementById('postgres_password').value=hexRand(16);
   },120);
   fetch(`${API_BASE}/prefill`).then(r=>r.json()).then(data=>{
@@ -1193,7 +1170,7 @@ window.addEventListener('DOMContentLoaded',()=>{
     renderProviderList();
     PROVIDERS.forEach(p=>{if(!p.isOllama){const el=document.getElementById('key-'+p.id);if(el&&ps[p.id].key){el.value=ps[p.id].key;onKeyInput(p.id);}}});
     const km={HA_URL:'ha_url',TELEGRAM_BOT_TOKEN:'telegram_bot_token',
-      TELEGRAM_ALLOWED_USER_IDS:'telegram_allowed_user_ids',HIS_API_TOKEN:'his_api_token',
+      TELEGRAM_ALLOWED_USER_IDS:'telegram_allowed_user_ids',
       PUBLIC_BASE_URL:'public_base_url',POSTGRES_PASSWORD:'postgres_password',
       OLLAMA_BASE_URL:'ollama_base_url'};
     for(const[k,field]of Object.entries(km)){if(data[k]){const el=document.getElementById(field);if(el)el.value=data[k];}}
