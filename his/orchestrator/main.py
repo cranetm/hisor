@@ -924,7 +924,7 @@ _WIZARD_HTML = r"""<!DOCTYPE html>
 </div>
 
 <script>
-const API_BASE = window.location.pathname.replace(/\/+$/, '');
+const API_BASE = window.location.pathname.replace(/\/admin\/?$/, '').replace(/\/+$/, '');
 const PROVIDERS=[
   {id:'gemini',icon:'🟣',label:'Gemini',badge:'Free',badgeClass:'badge-free',
    desc:'Google — best-in-class embeddings, generous free tier.',
